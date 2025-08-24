@@ -165,42 +165,29 @@ async function fetchBondsData() {
 
 // Parse MarketWatchPlus.aspx data
 function parseTSETMCData(rawText) {
-    console.log('RAW DATA:', rawText.slice(0, 500)); // Debug log
+    console.log('Parsing TSETMC MarketWatchPlus data...');
+    console.log('RAW DATA (first 500 chars):', rawText.slice(0, 500)); // Debug log
     
-    // Split by newlines and filter out empty lines
-    const rows = rawText.split('\n').filter(row => row.trim());
+    // The MarketWatchPlus data is structured in sections separated by @@ and @
+    // The relevant data for instruments seems to be in the second section, separated by @
+    // and individual instruments are separated by ;
+    const sections = rawText.split('@@');
+    if (sections.length < 2) {
+        console.error('Invalid TSETMC MarketWatchPlus data format: Missing @@ separator');
+        return [];
+    }
+
+    const instrumentSections = sections[1].split('@');
+    if (instrumentSections.length < 2) {
+        console.error('Invalid TSETMC MarketWatchPlus data format: Missing @ separator in the second section');
+        return [];
+    }
+
+    // The actual instrument data is in the second part of the second section
+    const instrumentData = instrumentSections[1].split(';');
     const bonds = [];
     
-    for (const row of rows) {
-        const fields = row.split(',');
-        console.log('FIELDS:', fields); // Debug log
-        
-        if (fields.length < 20) continue;
-        
-        // Based on the actual data format, the bond name and symbol are at the end
-        // Extract the last part that contains the bond information
-        const lastField = fields[fields.length - 1];
-        const bondInfoMatch = lastField.match(/(.+?)\s+(.+)$/);
-        
-        if (!bondInfoMatch) continue;
-        
-        const symbol = bondInfoMatch[1]?.trim() || '';
-        const name = bondInfoMatch[2]?.trim() || '';
-        
-        // Parse the numerical fields (they come before the bond name)
-        const trades = parseInt(fields[0]?.replace(/,/g, '') || '0');
-        const volume = parseInt(fields[1]?.replace(/,/g, '') || '0');
-        const value = parseInt(fields[2]?.replace(/,/g, '') || '0');
-        const yesterdayPrice = parseInt(fields[3]?.replace(/,/g, '') || '0');
-        const firstPrice = parseInt(fields[4]?.replace(/,/g, '') || '0');
-        const lastPrice = parseInt(fields[5]?.replace(/,/g, '') || '0');
-        const change = parseInt(fields[6]?.replace(/,/g, '') || '0');
-        const changePercent = parseFloat(fields[7]?.replace(/,/g, '') || '0');
-        const currentPrice = parseInt(fields[8]?.replace(/,/g, '') || '0');
-        const currentChange = parseInt(fields[9]?.replace(/,/g, '') || '0');
-        const currentChangePercent = parseFloat(fields[10]?.replace(/,/g, '') || '0');
-        const minPrice = parseInt(fields[11]?.replace(/,/g, '') || '0');
-        const maxPrice = parseInt(fields[12]?.replace(/,/g, '') || '0');
+    for (const instrumentStr of instrumentData) {
         
         // Try to extract maturity date from name (e.g. ...-YYMMDD)
         let maturityDate = null;
@@ -210,6 +197,43 @@ function parseTSETMCData(rawText) {
             const month = parseInt(dateMatch[2]);
             const day = parseInt(dateMatch[3]);
             maturityDate = new Date(year, month - 1, day);
+        }
+        
+        // Parse fields from the instrument string
+        const fields = instrumentStr.split(',');
+        console.log('INSTRUMENT FIELDS:', fields); // Debug log each instrument
+
+        if (fields.length < 15) { // Adjusted minimum length based on observed data
+             console.log('Skipping incomplete instrument data:', instrumentStr);
+             continue;
+        }
+
+        try {
+            // Based on manual observation of the data format in the commit v.2
+            // and comparing with the new raw data, the fields seem to be in a different order.
+            // We need to identify the correct indices for each piece of information.
+            // This is a best effort based on limited samples and may need adjustment.
+
+            const symbol = fields[0]?.trim() || ''; // Assuming the first field is the symbol
+            const name = fields[1]?.trim() || '';   // Assuming the second field is the name
+
+             // Let's try to find the last price and volume based on common positions in similar data feeds
+             // This is highly speculative and might need refinement based on more data samples
+            const lastPrice = parseFloat(fields[5]?.replace(/,/g, '') || '0'); // Speculative index
+            const volume = parseFloat(fields[2]?.replace(/,/g, '') || '0');    // Speculative index
+            const change = parseFloat(fields[6]?.replace(/,/g, '') || '0');     // Speculative index
+            const changePercent = parseFloat(fields[7]?.replace(/%/g, '') || '0'); // Speculative index
+
+             // Extract maturity date from name if possible
+             let maturityDate = null;
+             const dateMatch = name.match(/(\d{2})(\d{2})(\d{2})$/); // Example: ...-YYMMDD
+             if (dateMatch) {
+                 const year = 1400 + parseInt(dateMatch[1]);
+                 const month = parseInt(dateMatch[2]);
+                 const day = parseInt(dateMatch[3]);
+                 maturityDate = new Date(year, month - 1, day);
+             }
+
         }
         
         const daysToMaturity = maturityDate ? 
@@ -222,19 +246,8 @@ function parseTSETMCData(rawText) {
         bonds.push({
             symbol,
             name,
-            trades,
             volume,
-            value,
-            yesterdayPrice,
-            firstPrice,
             lastPrice,
-            change,
-            changePercent,
-            currentPrice,
-            currentChange,
-            currentChangePercent,
-            minPrice,
-            maxPrice,
             maturityDate,
             daysToMaturity,
             isExpired,
