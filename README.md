@@ -56,12 +56,9 @@ Treasury-Bond-Visualizer/
 └── README.md           # مستندات
 ```
 
-## API مورد استفاده
+## منبع داده
 
-برنامه از API رسمی بازار سرمایه ایران استفاده می‌کند:
-```
-https://brsapi.ir/Api/Tsetmc/AllSymbols.php?key=BHiTdivFjl9mbgBec5euCt3apTaC43kn&type=4
-```
+در این نسخه جدید، داده‌ها مستقیماً از سایت TSETMC بارگذاری و پردازش می‌شوند و هیچگونه ارتباطی با سایت brsapi.ir یا APIهای مشابه وجود ندارد.
 
 ## محاسبات مالی
 

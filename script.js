@@ -1,10 +1,367 @@
-// Global variables
+// Treasury Bond Visualizer - Data Scraper Version
 let bondsData = [];
+let filteredData = [];
+let currentSort = { field: 'maturityDate', direction: 'asc' };
+
+// Chart instances
 let yieldDistributionChart = null;
 let riskFreeRateChart = null;
 
-// API Configuration
-const API_URL = 'https://brsapi.ir/Api/Tsetmc/AllSymbols.php?key=BHiTdivFjl9mbgBec5euCt3apTaC43kn&type=4';
+// Configuration for TSETMC table
+const TSETMC_CONFIG = {
+    "UpdateSpeed": 1000,
+    "ColorChangeSpeed": 7000,
+    "ColorChangeEnable": 1,
+    "ViewMode": 0,
+    "Market": 0,
+    "BasketNo": -1,
+    "FilterNo": -1,
+    "SectorNo": "",
+    "sortField": "tno",
+    "sortDirection": -1,
+    "ActiveTemplate": 2,
+    "Baskets": [],
+    "Filters": [],
+    "GroupBySector": 1,
+    "LightBackground": 1,
+    "BigNumberSymbol": 0,
+    "ShowHousingFacilities": 0,
+    "ShowSaham": 0,
+    "ShowPayeFarabourse": 0,
+    "ShowHaghTaghaddom": 0,
+    "ShowOraghMosharekat": 1,
+    "ShowEkhtiarForoush": 0,
+    "ShowAti": 0,
+    "ShowSandoogh": 0,
+    "ShowKala": 0,
+    "AutoScroll": 0,
+    "LoadClientType": 0,
+    "LoadInstStat": 0,
+    "LoadInstHistory": 0,
+    "CustomTemplate": {
+        "colNo": 10,
+        "fontSize": 12,
+        "rowHeight": 20,
+        "cols": [],
+        "all": "",
+        "rowStyle": "",
+        "row": ""
+    }
+};
+
+// Parse HTML table data from TSETMC
+function parseTSETMCTable(htmlData) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(htmlData, 'text/html');
+    const rows = doc.querySelectorAll('div[id]');
+    
+    const bonds = [];
+    
+    rows.forEach(row => {
+        // Skip section separators
+        if (row.classList.contains('secSep')) return;
+        
+        const cells = row.querySelectorAll('div[style*="width"]');
+        if (cells.length < 20) return; // Skip incomplete rows
+        
+        try {
+            // Extract data from cells based on the provided HTML structure
+            const symbol = cells[0]?.textContent?.trim() || '';
+            const name = cells[1]?.textContent?.trim() || '';
+            const volume = parseFloat(cells[3]?.textContent?.replace(/,/g, '') || '0');
+            const lastPrice = parseFloat(cells[6]?.textContent?.replace(/,/g, '') || '0');
+            const change = parseFloat(cells[8]?.textContent?.replace(/,/g, '') || '0');
+            const changePercent = parseFloat(cells[9]?.textContent?.replace('%', '') || '0');
+            
+            // Extract maturity date from name (assuming format like "اسناد خزانه-م1-س.قوا03-060615")
+            let maturityDate = null;
+            const dateMatch = name.match(/(\d{2})(\d{2})(\d{2})$/);
+            if (dateMatch) {
+                const year = 1400 + parseInt(dateMatch[1]); // Convert to Persian year
+                const month = parseInt(dateMatch[2]);
+                const day = parseInt(dateMatch[3]);
+                maturityDate = new Date(year, month - 1, day);
+            }
+            
+            // Calculate days to maturity
+            const daysToMaturity = maturityDate ? 
+                Math.ceil((maturityDate - new Date()) / (1000 * 60 * 60 * 24)) : null;
+            
+            // Determine if expired
+            const isExpired = daysToMaturity !== null && daysToMaturity < 0;
+            
+            bonds.push({
+                symbol: symbol,
+                name: name,
+                volume: volume,
+                lastPrice: lastPrice,
+                change: change,
+                changePercent: changePercent,
+                maturityDate: maturityDate,
+                daysToMaturity: daysToMaturity,
+                isExpired: isExpired,
+                sector: getSectorFromName(name)
+            });
+        } catch (error) {
+            console.error('Error parsing row:', error);
+        }
+    });
+    
+    return bonds;
+}
+
+// Extract sector from bond name
+function getSectorFromName(name) {
+    if (name.includes('اسناد خزانه') || name.includes('اخزا')) {
+        return 'اسناد خزانه';
+    } else if (name.includes('مرابحه عام دولت') || name.includes('اراد')) {
+        return 'مرابحه عام دولت';
+    } else if (name.includes('صكوك اجاره') || name.includes('صكوك مرابحه')) {
+        return 'صكوك';
+    } else {
+        return 'سایر';
+    }
+}
+
+// Utility functions for UI state management
+function showLoading(show) {
+    const loadingElement = document.getElementById('loading-indicator');
+    if (loadingElement) {
+        loadingElement.style.display = show ? 'block' : 'none';
+    }
+    
+    // Update status
+    if (show) {
+        updateStatus('loading', 'در حال دریافت اطلاعات...');
+    } else {
+        updateStatus('success', 'اطلاعات با موفقیت دریافت شد');
+    }
+}
+
+function showError(message) {
+    updateStatus('error', message);
+    console.error('Application error:', message);
+}
+
+// Fetch data from TSETMC website
+async function fetchBondsData() {
+    try {
+        showLoading(true);
+        // Fetch MarketWatchPlus data from the server proxy
+        const response = await fetch('/api/tsetmc-data');
+        if (!response.ok) throw new Error('خطا در دریافت داده از سرور');
+        const rawText = await response.text();
+        bondsData = parseTSETMCData(rawText);
+        applyFilters();
+        updateCharts();
+        updateStats();
+        showLoading(false);
+    } catch (error) {
+        console.error('Error fetching bonds data:', error);
+        showLoading(false);
+        showError('خطا در دریافت اطلاعات اوراق');
+    }
+}
+
+// Parse MarketWatchPlus.aspx data
+function parseTSETMCData(rawText) {
+    console.log('RAW DATA:', rawText.slice(0, 500)); // Debug log
+    
+    // Split by newlines and filter out empty lines
+    const rows = rawText.split('\n').filter(row => row.trim());
+    const bonds = [];
+    
+    for (const row of rows) {
+        const fields = row.split(',');
+        console.log('FIELDS:', fields); // Debug log
+        
+        if (fields.length < 20) continue;
+        
+        // Based on the actual data format, the bond name and symbol are at the end
+        // Extract the last part that contains the bond information
+        const lastField = fields[fields.length - 1];
+        const bondInfoMatch = lastField.match(/(.+?)\s+(.+)$/);
+        
+        if (!bondInfoMatch) continue;
+        
+        const symbol = bondInfoMatch[1]?.trim() || '';
+        const name = bondInfoMatch[2]?.trim() || '';
+        
+        // Filter only financial bonds (اسناد خزانه، مرابحه، صکوک، اخزا، اراد)
+        if (!/اسناد|مرابحه|صکوک|اخزا|اراد/.test(name)) continue;
+        
+        // Parse the numerical fields (they come before the bond name)
+        const trades = parseInt(fields[0]?.replace(/,/g, '') || '0');
+        const volume = parseInt(fields[1]?.replace(/,/g, '') || '0');
+        const value = parseInt(fields[2]?.replace(/,/g, '') || '0');
+        const yesterdayPrice = parseInt(fields[3]?.replace(/,/g, '') || '0');
+        const firstPrice = parseInt(fields[4]?.replace(/,/g, '') || '0');
+        const lastPrice = parseInt(fields[5]?.replace(/,/g, '') || '0');
+        const change = parseInt(fields[6]?.replace(/,/g, '') || '0');
+        const changePercent = parseFloat(fields[7]?.replace(/,/g, '') || '0');
+        const currentPrice = parseInt(fields[8]?.replace(/,/g, '') || '0');
+        const currentChange = parseInt(fields[9]?.replace(/,/g, '') || '0');
+        const currentChangePercent = parseFloat(fields[10]?.replace(/,/g, '') || '0');
+        const minPrice = parseInt(fields[11]?.replace(/,/g, '') || '0');
+        const maxPrice = parseInt(fields[12]?.replace(/,/g, '') || '0');
+        
+        // Try to extract maturity date from name (e.g. ...-YYMMDD)
+        let maturityDate = null;
+        const dateMatch = name.match(/(\d{2})(\d{2})(\d{2})$/);
+        if (dateMatch) {
+            const year = 1400 + parseInt(dateMatch[1]);
+            const month = parseInt(dateMatch[2]);
+            const day = parseInt(dateMatch[3]);
+            maturityDate = new Date(year, month - 1, day);
+        }
+        
+        const daysToMaturity = maturityDate ? 
+            Math.ceil((maturityDate - new Date()) / (1000 * 60 * 60 * 24)) : null;
+        const isExpired = daysToMaturity !== null && daysToMaturity < 0;
+        
+        // Calculate yield (simple discount bond yield)
+        const yieldValue = lastPrice > 0 ? ((1000000 - lastPrice) / lastPrice * 100).toFixed(2) : '0.00';
+        
+        bonds.push({
+            symbol,
+            name,
+            trades,
+            volume,
+            value,
+            yesterdayPrice,
+            firstPrice,
+            lastPrice,
+            change,
+            changePercent,
+            currentPrice,
+            currentChange,
+            currentChangePercent,
+            minPrice,
+            maxPrice,
+            maturityDate,
+            daysToMaturity,
+            isExpired,
+            yield: yieldValue,
+            sector: getSectorFromName(name)
+        });
+    }
+    
+    console.log('PARSED BONDS:', bonds.length); // Debug log
+    return bonds;
+}
+
+// Apply filters and sorting to bonds data
+function applyFilters() {
+    let filtered = [...bondsData];
+    
+    // Apply search filter
+    const searchTerm = searchInput.value.toLowerCase();
+    if (searchTerm) {
+        filtered = filtered.filter(bond => 
+            bond.name.toLowerCase().includes(searchTerm) ||
+            bond.symbol.toLowerCase().includes(searchTerm) ||
+            bond.sector.toLowerCase().includes(searchTerm)
+        );
+    }
+    
+    // Apply sorting
+    const sortBy = sortSelect.value;
+    filtered.sort((a, b) => {
+        switch (sortBy) {
+            case 'yield-desc':
+                return parseFloat(((1000000 - b.lastPrice) / b.lastPrice * 100).toFixed(2)) - 
+                       parseFloat(((1000000 - a.lastPrice) / a.lastPrice * 100).toFixed(2));
+            case 'yield-asc':
+                return parseFloat(((1000000 - a.lastPrice) / a.lastPrice * 100).toFixed(2)) - 
+                       parseFloat(((1000000 - b.lastPrice) / b.lastPrice * 100).toFixed(2));
+            case 'price-desc':
+                return b.lastPrice - a.lastPrice;
+            case 'price-asc':
+                return a.lastPrice - b.lastPrice;
+            case 'volume-desc':
+                return b.volume - a.volume;
+            case 'volume-asc':
+                return a.volume - b.volume;
+            case 'maturity-asc':
+                if (!a.maturityDate && !b.maturityDate) return 0;
+                if (!a.maturityDate) return 1;
+                if (!b.maturityDate) return -1;
+                return a.maturityDate - b.maturityDate;
+            case 'maturity-desc':
+                if (!a.maturityDate && !b.maturityDate) return 0;
+                if (!a.maturityDate) return 1;
+                if (!b.maturityDate) return -1;
+                return b.maturityDate - a.maturityDate;
+            case 'days-asc':
+                if (a.daysToMaturity === null && b.daysToMaturity === null) return 0;
+                if (a.daysToMaturity === null) return 1;
+                if (b.daysToMaturity === null) return -1;
+                return a.daysToMaturity - b.daysToMaturity;
+            case 'days-desc':
+                if (a.daysToMaturity === null && b.daysToMaturity === null) return 0;
+                if (a.daysToMaturity === null) return 1;
+                if (b.daysToMaturity === null) return -1;
+                return b.daysToMaturity - a.daysToMaturity;
+            default:
+                return 0;
+        }
+    });
+    
+    filteredData = filtered;
+    
+    // Update the table with filtered data
+    renderBondsTable();
+}
+
+// Update charts with current data
+function updateCharts() {
+    if (filteredData.length === 0) {
+        console.log('No data to update charts');
+        return;
+    }
+    
+    // Create charts if they don't exist
+    if (typeof Chart !== 'undefined') {
+        createCharts();
+    } else {
+        console.log('Chart.js not available, skipping chart updates');
+    }
+}
+
+// Update statistics with current data
+function updateStats() {
+    if (filteredData.length === 0) {
+        console.log('No data to update stats');
+        return;
+    }
+    
+    // Calculate yields for all bonds
+    const yields = filteredData.map(bond => {
+        return bond.lastPrice > 0 ? parseFloat(((1000000 - bond.lastPrice) / bond.lastPrice * 100).toFixed(2)) : 0;
+    }).filter(yield => yield > 0);
+    
+    if (yields.length === 0) {
+        console.log('No valid yields to calculate stats');
+        return;
+    }
+    
+    const avgYieldValue = yields.reduce((sum, yield) => sum + yield, 0) / yields.length;
+    const maxYieldValue = Math.max(...yields);
+    const minYieldValue = Math.min(...yields);
+    
+    console.log('Stats:', {
+        total: filteredData.length,
+        avgYield: avgYieldValue,
+        maxYield: maxYieldValue,
+        minYield: minYieldValue
+    });
+    
+    // Update dashboard elements
+    if (totalBonds) totalBonds.textContent = filteredData.length.toLocaleString('fa-IR');
+    if (avgYield) avgYield.textContent = avgYieldValue.toFixed(2) + '%';
+    if (maxYield) maxYield.textContent = maxYieldValue.toFixed(2) + '%';
+    if (minYield) minYield.textContent = minYieldValue.toFixed(2) + '%';
+}
 
 // DOM Elements
 const statusIndicator = document.getElementById('status-indicator');
@@ -32,189 +389,14 @@ function initializeApp() {
 
 function setupEventListeners() {
     refreshBtn.addEventListener('click', fetchBondsData);
-    searchInput.addEventListener('input', filterBonds);
-    sortSelect.addEventListener('change', sortBonds);
+    searchInput.addEventListener('input', applyFilters);
+    sortSelect.addEventListener('change', applyFilters);
     calculateBtn.addEventListener('click', calculateYield);
 }
 
-async function fetchBondsData() {
-    updateStatus('loading', 'در حال دریافت داده‌ها...');
-    
-    try {
-        const response = await fetch(API_URL);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('Raw API data:', data); // Debug log
-        
-        if (data && Array.isArray(data)) {
-            bondsData = processBondsData(data);
-            console.log('Processed bonds data:', bondsData); // Debug log
-            
-            if (bondsData.length > 0) {
-                updateStatus('connected', `داده‌ها با موفقیت دریافت شد (${bondsData.length} اوراق)`);
-                updateDashboard();
-                createCharts();
-                renderBondsTable();
-            } else {
-                throw new Error('هیچ اوراق تامین مالی در داده‌ها یافت نشد');
-            }
-        } else {
-            throw new Error('داده‌های دریافتی نامعتبر است');
-        }
-        
-    } catch (error) {
-        console.error('Error fetching bonds data:', error);
-        updateStatus('error', 'خطا در دریافت داده‌ها');
-        
-        // Fallback to sample data for demonstration
-        bondsData = getSampleData();
-        updateStatus('connected', 'نمایش داده‌های نمونه');
-        updateDashboard();
-        createCharts();
-        renderBondsTable();
-    }
-}
+// Removed old processBondsData function - using parseTSETMCData instead
 
-function processBondsData(rawData) {
-    console.log('Processing raw data with', rawData.length, 'items');
-    
-    // Filter for financial instruments (bonds, sukuk, treasury bills)
-    const processedData = rawData
-        .filter(item => {
-            // Check if item exists and is a financial instrument
-            return item && (
-                item.cs === "اوراق تامین مالی" || 
-                item.cs === "سرمایه‌گذاری‌ها" ||
-                (item.l30 && (
-                    item.l30.includes('اسناد خزانه') ||
-                    item.l30.includes('مرابحه') ||
-                    item.l30.includes('صکوک') ||
-                    item.l30.includes('مشارکت')
-                ))
-            );
-        })
-        .map(item => {
-            console.log('Processing item:', item); // Debug individual items
-            
-            // Extract data from API response
-            const name = item.l30 || item.l18 || 'اوراق تامین مالی';
-            const code = item.l18 || item.isin || 'N/A';
-            const price = parseFloat(item.pl || item.pc || item.pf || 0); // Last price, current price, or final price
-            const volume = parseInt(item.tvol || item.z || 0); // Total volume or base volume
-            const faceValue = parseFloat(item.z || 1000000); // Base volume as face value
-            
-            // Calculate yield based on price and face value
-            let yield = 0;
-            if (price > 0 && faceValue > 0) {
-                // Calculate yield: (Face Value - Current Price) / Current Price * 100
-                yield = ((faceValue - price) / price * 100).toFixed(2);
-            }
-            
-            // Calculate maturity date from ISIN or use default
-            const maturityInfo = calculateMaturityFromISIN(item.isin);
-            const maturityDate = maturityInfo.date || 'N/A';
-            const daysRemaining = maturityInfo.daysRemaining;
-            const isExpired = maturityInfo.isExpired;
-            
-            // Estimate coupon rate based on yield or use default
-            const couponRate = parseFloat(item.couponRate || 20);
-            
-            return {
-                name: name,
-                code: code,
-                price: price,
-                volume: volume,
-                yield: yield,
-                faceValue: faceValue,
-                maturityDate: maturityDate,
-                daysRemaining: daysRemaining,
-                isExpired: isExpired,
-                couponRate: couponRate,
-                isin: item.isin,
-                category: item.cs,
-                lastUpdate: item.time
-            };
-        })
-        .filter(bond => {
-            // Filter out invalid bonds
-            const isValid = bond.price > 0 && parseFloat(bond.yield) > 0 && parseFloat(bond.yield) < 100;
-            if (!isValid) {
-                console.log('Filtered out bond:', bond);
-            }
-            return isValid;
-        });
-    
-    console.log('Final processed data:', processedData);
-    return processedData;
-}
-
-function calculateMaturityFromISIN(isin) {
-    if (!isin || isin.length < 8) {
-        return {
-            date: 'N/A',
-            daysRemaining: null,
-            isExpired: false
-        };
-    }
-    
-    try {
-        // Extract date from ISIN (format: IRB3TR260661)
-        // The last 6 digits might contain date information
-        const datePart = isin.slice(-6);
-        const year = parseInt('14' + datePart.slice(0, 2)); // Assuming 1400s
-        const month = parseInt(datePart.slice(2, 4));
-        const day = parseInt(datePart.slice(4, 6));
-        
-        if (month > 0 && month <= 12 && day > 0 && day <= 31) {
-            // Convert Persian date to Gregorian for calculation
-            const gregorianDate = persianToGregorian(year, month, day);
-            const maturityDate = new Date(gregorianDate);
-            const today = new Date();
-            
-            // Calculate days remaining
-            const timeDiff = maturityDate.getTime() - today.getTime();
-            const daysRemaining = Math.ceil(timeDiff / (1000 * 3600 * 24));
-            const isExpired = daysRemaining < 0;
-            
-            return {
-                date: `${year}/${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}`,
-                daysRemaining: daysRemaining,
-                isExpired: isExpired
-            };
-        }
-    } catch (e) {
-        console.log('Error parsing ISIN date:', e);
-    }
-    
-    return {
-        date: 'N/A',
-        daysRemaining: null,
-        isExpired: false
-    };
-}
-
-function persianToGregorian(pYear, pMonth, pDay) {
-    // Simple Persian to Gregorian conversion
-    // This is a basic conversion - for more accurate results, use a proper library
-    const gregorianYear = pYear - 621;
-    const gregorianMonth = pMonth + 2; // Approximate offset
-    const gregorianDay = pDay;
-    
-    // Adjust for month overflow
-    let adjustedMonth = gregorianMonth;
-    let adjustedYear = gregorianYear;
-    
-    if (adjustedMonth > 12) {
-        adjustedMonth -= 12;
-        adjustedYear += 1;
-    }
-    
-    return `${adjustedYear}-${adjustedMonth.toString().padStart(2, '0')}-${gregorianDay.toString().padStart(2, '0')}`;
-}
+// Removed unused ISIN parsing functions - using direct date parsing from bond names instead
 
 function calculateYieldFromPrice(price, faceValue) {
     if (!price || !faceValue) return 0;
@@ -515,14 +697,14 @@ function createRiskFreeRateChart() {
 function renderBondsTable() {
     bondsTableBody.innerHTML = '';
     
-    if (bondsData.length === 0) {
+    if (filteredData.length === 0) {
         const row = document.createElement('tr');
         row.innerHTML = '<td colspan="8" style="text-align: center; padding: 20px;">هیچ داده‌ای برای نمایش وجود ندارد</td>';
         bondsTableBody.appendChild(row);
         return;
     }
     
-    bondsData.forEach(bond => {
+    filteredData.forEach(bond => {
         const row = document.createElement('tr');
         
         // Determine maturity status and styling
@@ -532,10 +714,10 @@ function renderBondsTable() {
         if (bond.isExpired) {
             maturityStatus = 'منقضی شده';
             statusClass = 'expired';
-        } else if (bond.daysRemaining <= 30) {
+        } else if (bond.daysToMaturity <= 30) {
             maturityStatus = 'نزدیک به سررسید';
             statusClass = 'near-maturity';
-        } else if (bond.daysRemaining <= 90) {
+        } else if (bond.daysToMaturity <= 90) {
             maturityStatus = 'میان‌مدت';
             statusClass = 'medium-term';
         } else {
@@ -545,30 +727,41 @@ function renderBondsTable() {
         
         // Format days remaining
         let daysDisplay = '';
-        if (bond.daysRemaining !== null) {
+        if (bond.daysToMaturity !== null) {
             if (bond.isExpired) {
-                daysDisplay = `${Math.abs(bond.daysRemaining)} روز گذشته`;
+                daysDisplay = `${Math.abs(bond.daysToMaturity)} روز گذشته`;
             } else {
-                daysDisplay = `${bond.daysRemaining} روز`;
+                daysDisplay = `${bond.daysToMaturity} روز`;
             }
         } else {
             daysDisplay = 'نامشخص';
         }
         
+        // Format maturity date
+        let maturityDateDisplay = '';
+        if (bond.maturityDate) {
+            maturityDateDisplay = bond.maturityDate.toLocaleDateString('fa-IR');
+        } else {
+            maturityDateDisplay = 'نامشخص';
+        }
+        
+        // Calculate yield (simplified calculation)
+        const yield = bond.lastPrice > 0 ? ((1000000 - bond.lastPrice) / bond.lastPrice * 100).toFixed(2) : '0.00';
+        
         row.innerHTML = `
             <td>${bond.name}</td>
-            <td>${bond.code}</td>
-            <td class="${getYieldClass(bond.yield)}">${bond.yield}%</td>
-            <td>${bond.price.toLocaleString('fa-IR')}</td>
+            <td>${bond.symbol}</td>
+            <td class="${getYieldClass(yield)}">${yield}%</td>
+            <td>${bond.lastPrice.toLocaleString('fa-IR')}</td>
             <td>${bond.volume.toLocaleString('fa-IR')}</td>
-            <td>${bond.maturityDate}</td>
+            <td>${maturityDateDisplay}</td>
             <td class="${statusClass}">${maturityStatus}</td>
             <td class="${statusClass}">${daysDisplay}</td>
         `;
         bondsTableBody.appendChild(row);
     });
     
-    console.log('Rendered table with', bondsData.length, 'rows');
+    console.log('Rendered table with', filteredData.length, 'rows');
 }
 
 function getYieldClass(yield) {
@@ -578,41 +771,7 @@ function getYieldClass(yield) {
     return 'yield-low';
 }
 
-function filterBonds() {
-    const searchTerm = searchInput.value.toLowerCase();
-    const rows = bondsTableBody.querySelectorAll('tr');
-    
-    rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchTerm) ? '' : 'none';
-    });
-}
 
-function sortBonds() {
-    const sortBy = sortSelect.value;
-    
-    bondsData.sort((a, b) => {
-        switch (sortBy) {
-            case 'yield-desc':
-                return parseFloat(b.yield) - parseFloat(a.yield);
-            case 'yield-asc':
-                return parseFloat(a.yield) - parseFloat(b.yield);
-            case 'name':
-                return a.name.localeCompare(b.name, 'fa');
-            case 'volume':
-                return b.volume - a.volume;
-            case 'maturity':
-                if (a.daysRemaining === null && b.daysRemaining === null) return 0;
-                if (a.daysRemaining === null) return 1;
-                if (b.daysRemaining === null) return -1;
-                return a.daysRemaining - b.daysRemaining;
-            default:
-                return 0;
-        }
-    });
-    
-    renderBondsTable();
-}
 
 function calculateYield() {
     const bondPrice = parseFloat(document.getElementById('bond-price').value);
