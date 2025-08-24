@@ -187,9 +187,6 @@ function parseTSETMCData(rawText) {
         const symbol = bondInfoMatch[1]?.trim() || '';
         const name = bondInfoMatch[2]?.trim() || '';
         
-        // Filter only financial bonds (اسناد خزانه، مرابحه، صکوک، اخزا، اراد)
-        if (!/اسناد|مرابحه|صکوک|اخزا|اراد/.test(name)) continue;
-        
         // Parse the numerical fields (they come before the bond name)
         const trades = parseInt(fields[0]?.replace(/,/g, '') || '0');
         const volume = parseInt(fields[1]?.replace(/,/g, '') || '0');
