@@ -115,7 +115,10 @@ function processBondsData(rawData) {
             }
             
             // Calculate maturity date from ISIN or use default
-            const maturityDate = calculateMaturityFromISIN(item.isin) || 'N/A';
+            const maturityInfo = calculateMaturityFromISIN(item.isin);
+            const maturityDate = maturityInfo.date || 'N/A';
+            const daysRemaining = maturityInfo.daysRemaining;
+            const isExpired = maturityInfo.isExpired;
             
             // Estimate coupon rate based on yield or use default
             const couponRate = parseFloat(item.couponRate || 20);
@@ -128,6 +131,8 @@ function processBondsData(rawData) {
                 yield: yield,
                 faceValue: faceValue,
                 maturityDate: maturityDate,
+                daysRemaining: daysRemaining,
+                isExpired: isExpired,
                 couponRate: couponRate,
                 isin: item.isin,
                 category: item.cs,
@@ -148,24 +153,67 @@ function processBondsData(rawData) {
 }
 
 function calculateMaturityFromISIN(isin) {
-    if (!isin || isin.length < 8) return 'N/A';
+    if (!isin || isin.length < 8) {
+        return {
+            date: 'N/A',
+            daysRemaining: null,
+            isExpired: false
+        };
+    }
     
     try {
         // Extract date from ISIN (format: IRB3TR260661)
         // The last 6 digits might contain date information
         const datePart = isin.slice(-6);
-        const year = '14' + datePart.slice(0, 2); // Assuming 1400s
-        const month = datePart.slice(2, 4);
-        const day = datePart.slice(4, 6);
+        const year = parseInt('14' + datePart.slice(0, 2)); // Assuming 1400s
+        const month = parseInt(datePart.slice(2, 4));
+        const day = parseInt(datePart.slice(4, 6));
         
-        if (parseInt(month) > 0 && parseInt(month) <= 12 && parseInt(day) > 0 && parseInt(day) <= 31) {
-            return `${year}/${month}/${day}`;
+        if (month > 0 && month <= 12 && day > 0 && day <= 31) {
+            // Convert Persian date to Gregorian for calculation
+            const gregorianDate = persianToGregorian(year, month, day);
+            const maturityDate = new Date(gregorianDate);
+            const today = new Date();
+            
+            // Calculate days remaining
+            const timeDiff = maturityDate.getTime() - today.getTime();
+            const daysRemaining = Math.ceil(timeDiff / (1000 * 3600 * 24));
+            const isExpired = daysRemaining < 0;
+            
+            return {
+                date: `${year}/${month.toString().padStart(2, '0')}/${day.toString().padStart(2, '0')}`,
+                daysRemaining: daysRemaining,
+                isExpired: isExpired
+            };
         }
     } catch (e) {
         console.log('Error parsing ISIN date:', e);
     }
     
-    return 'N/A';
+    return {
+        date: 'N/A',
+        daysRemaining: null,
+        isExpired: false
+    };
+}
+
+function persianToGregorian(pYear, pMonth, pDay) {
+    // Simple Persian to Gregorian conversion
+    // This is a basic conversion - for more accurate results, use a proper library
+    const gregorianYear = pYear - 621;
+    const gregorianMonth = pMonth + 2; // Approximate offset
+    const gregorianDay = pDay;
+    
+    // Adjust for month overflow
+    let adjustedMonth = gregorianMonth;
+    let adjustedYear = gregorianYear;
+    
+    if (adjustedMonth > 12) {
+        adjustedMonth -= 12;
+        adjustedYear += 1;
+    }
+    
+    return `${adjustedYear}-${adjustedMonth.toString().padStart(2, '0')}-${gregorianDay.toString().padStart(2, '0')}`;
 }
 
 function calculateYieldFromPrice(price, faceValue) {
@@ -181,99 +229,62 @@ function calculateYieldFromPrice(price, faceValue) {
 }
 
 function getSampleData() {
-    return [
-        {
-            name: 'اسناد خزانه-م1-س.قوا03-060615',
-            code: 'اخزا301',
-            price: 538930,
-            volume: 167518,
-            yield: 85.68,
+    const today = new Date();
+    const sampleMaturities = [
+        { year: 1405, month: 6, day: 6, daysOffset: 300 },
+        { year: 1404, month: 12, day: 5, daysOffset: -50 },
+        { year: 1404, month: 7, day: 7, daysOffset: 150 },
+        { year: 1404, month: 6, day: 9, daysOffset: 120 },
+        { year: 1404, month: 6, day: 6, daysOffset: 90 },
+        { year: 1404, month: 10, day: 10, daysOffset: 200 },
+        { year: 1404, month: 4, day: 7, daysOffset: 60 }
+    ];
+    
+    return sampleMaturities.map((maturity, index) => {
+        const maturityDate = new Date(today.getTime() + (maturity.daysOffset * 24 * 60 * 60 * 1000));
+        const daysRemaining = Math.ceil((maturityDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+        const isExpired = daysRemaining < 0;
+        
+        return {
+            name: [
+                'اسناد خزانه-م1-س.قوا03-060615',
+                'اسنادخزانه-م1بودجه02-050325',
+                'مرابحه عام دولت226-ش.خ070414',
+                'اسنادخزانه-م2بودجه02-050923',
+                'مرابحه عام دولت227-ش.خ060921',
+                'اسناد خزانه-م13بودجه02-051021',
+                'اسناد خزانه-م11بودجه02-050720'
+            ][index],
+            code: [
+                'اخزا301',
+                'اخزا201',
+                'اراد226',
+                'اخزا202',
+                'اراد227',
+                'اخزا213',
+                'اخزا211'
+            ][index],
+            price: [538930, 784870, 815000, 674260, 851100, 659000, 710300][index],
+            volume: [167518, 104390, 19315000, 51729, 10380000, 10726, 322781][index],
+            yield: [85.68, 27.42, 22.70, 48.32, 17.49, 51.75, 40.79][index],
             faceValue: 1000000,
-            maturityDate: '1405/06/06',
-            couponRate: 20,
-            isin: 'IRB3TR260661',
+            maturityDate: `${maturity.year}/${maturity.month.toString().padStart(2, '0')}/${maturity.day.toString().padStart(2, '0')}`,
+            daysRemaining: daysRemaining,
+            isExpired: isExpired,
+            couponRate: [20, 22, 25, 18, 24, 21, 23][index],
+            isin: [
+                'IRB3TR260661',
+                'IRB3TR150531',
+                'IRB4O1290741',
+                'IRB3TR160591',
+                'IRB4O1300691',
+                'IRB3TR2505A1',
+                'IRB3TR230571'
+            ][index],
             category: 'اوراق تامین مالی',
             lastUpdate: '16:48:02'
-        },
-        {
-            name: 'اسنادخزانه-م1بودجه02-050325',
-            code: 'اخزا201',
-            price: 784870,
-            volume: 104390,
-            yield: 27.42,
-            faceValue: 1000000,
-            maturityDate: '1404/12/05',
-            couponRate: 22,
-            isin: 'IRB3TR150531',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '14:59:59'
-        },
-        {
-            name: 'مرابحه عام دولت226-ش.خ070414',
-            code: 'اراد226',
-            price: 815000,
-            volume: 19315000,
-            yield: 22.70,
-            faceValue: 1000000,
-            maturityDate: '1404/07/07',
-            couponRate: 25,
-            isin: 'IRB4O1290741',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '14:44:26'
-        },
-        {
-            name: 'اسنادخزانه-م2بودجه02-050923',
-            code: 'اخزا202',
-            price: 674260,
-            volume: 51729,
-            yield: 48.32,
-            faceValue: 1000000,
-            maturityDate: '1404/06/09',
-            couponRate: 18,
-            isin: 'IRB3TR160591',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '14:52:45'
-        },
-        {
-            name: 'مرابحه عام دولت227-ش.خ060921',
-            code: 'اراد227',
-            price: 851100,
-            volume: 10380000,
-            yield: 17.49,
-            faceValue: 1000000,
-            maturityDate: '1404/06/06',
-            couponRate: 24,
-            isin: 'IRB4O1300691',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '12:40:52'
-        },
-        {
-            name: 'اسناد خزانه-م13بودجه02-051021',
-            code: 'اخزا213',
-            price: 659000,
-            volume: 10726,
-            yield: 51.75,
-            faceValue: 1000000,
-            maturityDate: '1404/10/10',
-            couponRate: 21,
-            isin: 'IRB3TR2505A1',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '14:40:55'
-        },
-        {
-            name: 'اسناد خزانه-م11بودجه02-050720',
-            code: 'اخزا211',
-            price: 710300,
-            volume: 322781,
-            yield: 40.79,
-            faceValue: 1000000,
-            maturityDate: '1404/04/07',
-            couponRate: 23,
-            isin: 'IRB3TR230571',
-            category: 'اوراق تامین مالی',
-            lastUpdate: '14:53:42'
-        }
-    ];
+        };
+    });
 }
 
 function updateStatus(status, message) {
@@ -506,13 +517,44 @@ function renderBondsTable() {
     
     if (bondsData.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="6" style="text-align: center; padding: 20px;">هیچ داده‌ای برای نمایش وجود ندارد</td>';
+        row.innerHTML = '<td colspan="8" style="text-align: center; padding: 20px;">هیچ داده‌ای برای نمایش وجود ندارد</td>';
         bondsTableBody.appendChild(row);
         return;
     }
     
     bondsData.forEach(bond => {
         const row = document.createElement('tr');
+        
+        // Determine maturity status and styling
+        let maturityStatus = '';
+        let statusClass = '';
+        
+        if (bond.isExpired) {
+            maturityStatus = 'منقضی شده';
+            statusClass = 'expired';
+        } else if (bond.daysRemaining <= 30) {
+            maturityStatus = 'نزدیک به سررسید';
+            statusClass = 'near-maturity';
+        } else if (bond.daysRemaining <= 90) {
+            maturityStatus = 'میان‌مدت';
+            statusClass = 'medium-term';
+        } else {
+            maturityStatus = 'بلندمدت';
+            statusClass = 'long-term';
+        }
+        
+        // Format days remaining
+        let daysDisplay = '';
+        if (bond.daysRemaining !== null) {
+            if (bond.isExpired) {
+                daysDisplay = `${Math.abs(bond.daysRemaining)} روز گذشته`;
+            } else {
+                daysDisplay = `${bond.daysRemaining} روز`;
+            }
+        } else {
+            daysDisplay = 'نامشخص';
+        }
+        
         row.innerHTML = `
             <td>${bond.name}</td>
             <td>${bond.code}</td>
@@ -520,6 +562,8 @@ function renderBondsTable() {
             <td>${bond.price.toLocaleString('fa-IR')}</td>
             <td>${bond.volume.toLocaleString('fa-IR')}</td>
             <td>${bond.maturityDate}</td>
+            <td class="${statusClass}">${maturityStatus}</td>
+            <td class="${statusClass}">${daysDisplay}</td>
         `;
         bondsTableBody.appendChild(row);
     });
@@ -557,6 +601,11 @@ function sortBonds() {
                 return a.name.localeCompare(b.name, 'fa');
             case 'volume':
                 return b.volume - a.volume;
+            case 'maturity':
+                if (a.daysRemaining === null && b.daysRemaining === null) return 0;
+                if (a.daysRemaining === null) return 1;
+                if (b.daysRemaining === null) return -1;
+                return a.daysRemaining - b.daysRemaining;
             default:
                 return 0;
         }
