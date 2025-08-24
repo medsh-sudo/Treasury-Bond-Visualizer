@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ماشین حساب بازده اوراق مشارکت دولتی</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>ماشین حساب بازده اوراق تامین مالی</h1>
+            <p>محاسبه و تحلیل بازده اسناد خزانه، مرابحه و صکوک با استفاده از داده‌های رسمی</p>
+        </header>
+
+        <div class="main-content">
+            <div class="control-panel">
+                <div class="api-status">
+                    <span id="status-indicator" class="status-indicator"></span>
+                    <span id="status-text">در حال بارگذاری...</span>
+                </div>
+                <button id="refresh-btn" class="refresh-btn">بارگذاری مجدد داده‌ها</button>
+            </div>
+
+            <div class="dashboard">
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <h3>تعداد کل اوراق</h3>
+                        <div id="total-bonds" class="stat-value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>میانگین بازده</h3>
+                        <div id="avg-yield" class="stat-value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>بیشترین بازده</h3>
+                        <div id="max-yield" class="stat-value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>کمترین بازده</h3>
+                        <div id="min-yield" class="stat-value">-</div>
+                    </div>
+                </div>
+
+                <div class="charts-container">
+                    <div class="chart-section">
+                        <h2>نمودار توزیع بازده اوراق تامین مالی</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="yieldDistributionChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-section">
+                        <h2>نمودار بازده بدون ریسک</h2>
+                        <div class="chart-wrapper">
+                            <canvas id="riskFreeRateChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="data-table-section">
+                    <h2>جدول اوراق تامین مالی</h2>
+                    <div class="table-controls">
+                        <input type="text" id="search-input" placeholder="جستجو در اوراق..." class="search-input">
+                        <select id="sort-select" class="sort-select">
+                            <option value="yield-desc">بازده (نزولی)</option>
+                            <option value="yield-asc">بازده (صعودی)</option>
+                            <option value="name">نام اوراق</option>
+                            <option value="volume">حجم معاملات</option>
+                            <option value="maturity">زمان تا سررسید</option>
+                        </select>
+                    </div>
+                    <div class="table-container">
+                        <table id="bonds-table" class="bonds-table">
+                            <thead>
+                                <tr>
+                                    <th>نام اوراق</th>
+                                    <th>کد</th>
+                                    <th>بازده (%)</th>
+                                    <th>قیمت (ریال)</th>
+                                    <th>حجم معاملات</th>
+                                    <th>تاریخ سررسید</th>
+                                    <th>وضعیت سررسید</th>
+                                    <th>روزهای باقی‌مانده</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bonds-table-body">
+                                <!-- Data will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="calculator-section">
+            <h2>محاسبه‌گر بازده</h2>
+            <div class="calculator-form">
+                <div class="form-group">
+                    <label for="bond-price">قیمت اوراق (ریال)</label>
+                    <input type="number" id="bond-price" placeholder="قیمت اوراق را وارد کنید">
+                </div>
+                <div class="form-group">
+                    <label for="face-value">ارزش اسمی (ریال)</label>
+                    <input type="number" id="face-value" placeholder="ارزش اسمی را وارد کنید">
+                </div>
+                <div class="form-group">
+                    <label for="coupon-rate">نرخ کوپن (%)</label>
+                    <input type="number" id="coupon-rate" placeholder="نرخ کوپن را وارد کنید">
+                </div>
+                <div class="form-group">
+                    <label for="time-to-maturity">زمان تا سررسید (سال)</label>
+                    <input type="number" id="time-to-maturity" placeholder="زمان تا سررسید را وارد کنید">
+                </div>
+                <button id="calculate-btn" class="calculate-btn">محاسبه بازده</button>
+                <div id="calculation-result" class="calculation-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
